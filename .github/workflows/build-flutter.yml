@@ -1,0 +1,47 @@
+name: Build Flutter Android
+on:
+  workflow_dispatch:
+    inputs:
+      packageName:
+        description: "Android package (e.g., com.brand.app)"
+        required: true
+        type: string
+      callbackUrl:
+        description: "Your API webhook"
+        required: true
+        type: string
+      cbSecret:
+        description: "Webhook secret"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: "stable" }
+
+      - name: Flutter deps
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK to B2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APP_KEY }}
+          AWS_EC2_METADATA_DISABLED: true
+        run: |
+          sudo apt-get update && sudo apt-get install -y awscli
+          aws --endpoint-url https://s3.us-east-005.backblazeb2.com s3 cp build/app/outputs/flutter-apk/app-release.apk s3://${{ secrets.B2_BUCKET_BUILDS }}/apk/${{ github.run_id }}.apk --acl private
+
+      - name: Callback → your API
+        run: |
+          APK_KEY="apk/${{ github.run_id }}.apk"
+          curl -X POST -H "Content-Type: application/json" \
+          -H "X-CB-SECRET: ${{ github.event.inputs.cbSecret }}" \
+          -d "{\"status\":\"success\",\"type\":\"flutter\",\"artifactUrl\":\"b2://${{ secrets.B2_BUCKET_BUILDS }}/${APK_KEY}\",\"b2Key\":\"${APK_KEY}\"}" \
+          "${{ github.event.inputs.callbackUrl }}"
